@@ -64,6 +64,14 @@ Zone Rollout Control 是面向 DNS 运维人员的 Go HTTP 控制面。它把区
 - `id`、`plan_id`、`request_key`、`request_fingerprint`、`region`、`lease_ids`。
 - 相同请求键和相同内容重放时返回原分配组，内容不一致时返回冲突。
 
+### LeaseGroupRelease
+
+按分配组整批释放的逐项结果。
+
+- `group_id`、`plan_id`、`reason`、`released_count`。
+- `results` 按组内租约顺序返回每项的租约视图和结论。
+- 结论取值：`released`（本次释放）、`already_released`、`already_reported`、`already_expired`（终态跳过，不做变更）。
+
 ### Probe
 
 解析节点对指定租约提交的一次上线观察。
@@ -194,7 +202,25 @@ ready --lease--> leased --report--> ready
 
 失败行为：租约过期、计划未激活、同键异载荷或持久化失败时保持原状态。
 
-### W4 一致性判定
+### W4 按分配组整批释放租约
+
+入口：`PATCH /v1/lease-groups/{id}/release`，请求体可选，仅包含 `reason`。
+
+步骤：
+
+1. 入口在单个事务内加载分配组及其全部租约。
+2. 先逐项校验所有租约引用和节点引用，再执行任何状态变更；坏引用整体回滚，不允许部分租约先落地。
+3. 对每个 `claimed` 租约应用与单个释放相同的终态规则：租约转 `released`、节点在仍为 `leased` 时恢复 `ready`，并携带同一原因。
+4. `released`、`reported`、`expired` 租约不再变更，分别以 `already_released`、`already_reported`、`already_expired` 逐项说明。
+5. 返回按组内租约顺序排列的逐项结果和本次实际释放数量；仅在确有租约释放时追加审计事件。
+
+成功行为：事故恢复可一次释放整个分配组，终态租约被安全跳过。
+
+失败行为：分配组不存在返回 `not_found`，原因超长或请求体非法返回 `validation_failed`，坏引用返回 `storage_failure` 且整批不变更。
+
+幂等行为：重复整组释放不改变任何租约、节点或审计事件，逐项结果保持稳定；原 `PATCH /v1/leases/{id}/release` 单个释放接口继续兼容。
+
+### W5 一致性判定
 
 入口：
 
@@ -256,6 +282,7 @@ ready --lease--> leased --report--> ready
 - `PATCH /v1/plans/{id}/activate`
 - `PATCH /v1/plans/{id}/complete`
 - `PATCH /v1/plans/{id}/leases`
+- `PATCH /v1/lease-groups/{id}/release`
 - `PATCH /v1/leases/{id}/release`
 - `PATCH /v1/leases/{id}/probes`
 - `PATCH /v1/plans/{id}/assessments`
@@ -281,6 +308,7 @@ ready --lease--> leased --report--> ready
 1. 计划创建、版本追加、激活、完成和非法重复迁移。
 2. 节点分配、租约唯一性、幂等重放和无可用节点冲突。
 3. 探针首写、同键重放、同键异载荷冲突和释放冲突。
-4. 一致性通过、审核触发、最新结果查询和幂等重放。
+4. 分配组整批释放、逐项终态结论、重复整组释放幂等（节点与审计不变）和单个释放兼容。
+5. 一致性通过、审核触发、最新结果查询和幂等重放。
 
 每条探针使用独立临时目录，不访问外部网络，结束后关闭服务。

@@ -28,6 +28,7 @@ type harness struct {
 	client   *http.Client
 	server   *http.Server
 	listener net.Listener
+	store    *store.Store
 	tempDir  string
 }
 
@@ -66,6 +67,7 @@ func newHarness() (*harness, error) {
 		client:   &http.Client{Timeout: 10 * time.Second},
 		server:   server,
 		listener: listener,
+		store:    stateStore,
 		tempDir:  tempDir,
 	}, nil
 }

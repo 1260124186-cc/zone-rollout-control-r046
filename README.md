@@ -113,6 +113,16 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/leases \
   }'
 ```
 
+事故恢复时按分配组整批释放（请求体可省略，`reason` 可选）：
+
+```bash
+curl -sS -X PATCH http://127.0.0.1:8090/v1/lease-groups/<group_id>/release \
+  -H 'Content-Type: application/json' \
+  -d '{"reason": "incident rollback"}'
+```
+
+响应逐项给出每个租约的结论：本次释放为 `released`，已到终态的租约分别返回 `already_released`、`already_reported`、`already_expired`，不会重复变更节点或追加审计。
+
 提交探针：
 
 ```bash
@@ -174,7 +184,8 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 | `PATCH` | `/v1/plans/{id}/activate` | 激活计划 |
 | `PATCH` | `/v1/plans/{id}/complete` | 完成计划 |
 | `PATCH` | `/v1/plans/{id}/leases` | 给节点分配租约 |
-| `PATCH` | `/v1/leases/{id}/release` | 提前释放租约 |
+| `PATCH` | `/v1/lease-groups/{id}/release` | 按分配组整批释放租约 |
+| `PATCH` | `/v1/leases/{id}/release` | 提前释放单个租约 |
 | `PATCH` | `/v1/leases/{id}/probes` | 登记探针并完成租约 |
 | `PATCH` | `/v1/plans/{id}/assessments` | 创建一致性判定 |
 | `GET` | `/v1/plans/{id}/assessments/latest` | 查询最近判定 |
@@ -186,6 +197,8 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 - A、AAAA、CNAME 条目在写入前规范化并稳定排序，重复条目直接拒绝。
 - 节点按 `ready -> leased -> ready` 变化，隔离节点不会被选中。
 - 一个节点同一时刻最多有一个 `claimed` 租约。
+- `PATCH /v1/lease-groups/{id}/release` 在单个事务内释放整组 `claimed` 租约；坏引用整批回滚，不产生部分落地，逐项返回终态结论。
+- 重复整组释放不改变租约、节点或审计；`PATCH /v1/leases/{id}/release` 单个释放接口保持兼容。
 - 相同请求键和相同内容可安全重放；同键异载荷返回 `idempotency_conflict`。
 - 一致性判定综合节点覆盖率、序列号、成功比例和最大延迟，返回 `consistent` 或 `review_required`。
 - 所有校验和冲突在快照替换前返回，不留下部分状态。
@@ -214,6 +227,7 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 ```bash
 go run ./cmd/workflowprobe plan-revision-lifecycle
 go run ./cmd/workflowprobe node-lease-allocation
+go run ./cmd/workflowprobe lease-group-release
 go run ./cmd/workflowprobe probe-ingestion
 go run ./cmd/workflowprobe consistency-assessment
 ```

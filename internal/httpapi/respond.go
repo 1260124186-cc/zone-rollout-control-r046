@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -26,7 +27,17 @@ type failureBody struct {
 
 func decode(w http.ResponseWriter, r *http.Request, target any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, requestLimit)
-	decoder := json.NewDecoder(r.Body)
+	payload, err := io.ReadAll(r.Body)
+	if err != nil {
+		return domain.Validation("request body could not be read", map[string]any{
+			"reason": err.Error(),
+		})
+	}
+	return decodeJSON(payload, target)
+}
+
+func decodeJSON(payload []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return domain.Validation("request body must contain valid JSON", map[string]any{

@@ -153,21 +153,146 @@ func (s *Service) Release(ctx context.Context, leaseID string) (domain.NodeLease
 				"node_id": lease.NodeID,
 			})
 		}
-		finishedAt := now
-		lease.State = domain.LeaseReleased
-		lease.FinishedAt = &finishedAt
-		state.Leases[leaseID] = lease
-		if node.State == domain.NodeLeased {
-			node.State = domain.NodeReady
-			node.Version++
-			node.UpdatedAt = now
-			state.Nodes[node.ID] = node
-		}
+		lease = applyClaimRelease(state, lease, node, now)
 		store.AddAudit(state, s.ids, "lease", leaseID, "released", now, nil)
 		result = lease
 		return nil
 	})
 	return result, err
+}
+
+// ReleaseGroup releases every claimed lease that belongs to one allocation
+// group within a single transaction. All group lease references and their
+// nodes are validated before any state change, so a broken reference aborts
+// the whole batch rather than releasing only part of the group. Leases that
+// already reached a terminal state are reported per item without touching
+// nodes or audit; replaying the same group release is therefore a no-op.
+func (s *Service) ReleaseGroup(
+	ctx context.Context,
+	groupID string,
+	input domain.LeaseGroupReleaseInput,
+) (domain.LeaseGroupRelease, error) {
+	input = domain.NormalizeLeaseGroupReleaseInput(input)
+	if err := domain.ValidateLeaseGroupReleaseInput(input); err != nil {
+		return domain.LeaseGroupRelease{}, err
+	}
+	now := s.clock.Now().UTC()
+	var result domain.LeaseGroupRelease
+	err := s.store.Write(ctx, func(state *domain.State) error {
+		group, ok := state.LeaseGroups[groupID]
+		if !ok {
+			return domain.NotFound("lease_group", groupID)
+		}
+
+		leases := make([]domain.NodeLease, len(group.LeaseIDs))
+		nodes := make([]domain.ResolverNode, len(group.LeaseIDs))
+		for index, leaseID := range group.LeaseIDs {
+			lease, exists := state.Leases[leaseID]
+			if !exists {
+				return domain.NewError(domain.CodeStorageFailure, "lease group references a missing lease", map[string]any{
+					"group_id": groupID,
+					"lease_id": leaseID,
+				})
+			}
+			if lease.AllocationID != groupID {
+				return domain.NewError(domain.CodeStorageFailure, "lease references a different allocation group", map[string]any{
+					"group_id":            groupID,
+					"lease_id":            leaseID,
+					"lease_allocation_id": lease.AllocationID,
+				})
+			}
+			leases[index] = lease
+			if lease.State == domain.LeaseClaimed {
+				node, exists := state.Nodes[lease.NodeID]
+				if !exists {
+					return domain.NewError(domain.CodeStorageFailure, "lease references a missing node", map[string]any{
+						"group_id": groupID,
+						"lease_id": leaseID,
+						"node_id":  lease.NodeID,
+					})
+				}
+				nodes[index] = node
+			}
+		}
+
+		items := make([]domain.LeaseReleaseItem, 0, len(leases))
+		releasedCount := 0
+		for index, lease := range leases {
+			outcome := releaseOutcome(lease.State)
+			if lease.State == domain.LeaseClaimed {
+				lease = applyClaimRelease(state, lease, nodes[index], now)
+				attributes := map[string]any{
+					"group_id": groupID,
+					"plan_id":  lease.PlanID,
+				}
+				if input.Reason != "" {
+					attributes["reason"] = input.Reason
+				}
+				store.AddAudit(state, s.ids, "lease", lease.ID, "released", now, attributes)
+				outcome = domain.LeaseReleaseReleased
+				releasedCount++
+			}
+			items = append(items, domain.LeaseReleaseItem{
+				Lease:   lease,
+				Outcome: outcome,
+			})
+		}
+		if releasedCount > 0 {
+			attributes := map[string]any{
+				"plan_id":        group.PlanID,
+				"lease_count":    len(group.LeaseIDs),
+				"released_count": releasedCount,
+			}
+			if input.Reason != "" {
+				attributes["reason"] = input.Reason
+			}
+			store.AddAudit(state, s.ids, "lease_group", groupID, "released", now, attributes)
+		}
+		result = domain.LeaseGroupRelease{
+			GroupID:       groupID,
+			PlanID:        group.PlanID,
+			Reason:        input.Reason,
+			ReleasedCount: releasedCount,
+			Results:       items,
+		}
+		return nil
+	})
+	return result, err
+}
+
+func releaseOutcome(state domain.LeaseState) domain.LeaseReleaseOutcome {
+	switch state {
+	case domain.LeaseReleased:
+		return domain.LeaseReleaseAlreadyReleased
+	case domain.LeaseReported:
+		return domain.LeaseReleaseAlreadyReported
+	case domain.LeaseExpired:
+		return domain.LeaseReleaseAlreadyExpired
+	default:
+		return domain.LeaseReleaseAlreadyReleased
+	}
+}
+
+// applyClaimRelease moves one claimed lease to released and returns its node
+// to ready, applying the same terminal rule used by the single-lease release.
+// The caller must have confirmed the lease is claimed and the node exists.
+func applyClaimRelease(
+	state *domain.State,
+	lease domain.NodeLease,
+	node domain.ResolverNode,
+	now time.Time,
+) domain.NodeLease {
+	finishedAt := now
+	lease.State = domain.LeaseReleased
+	lease.FinishedAt = &finishedAt
+	state.Leases[lease.ID] = lease
+	if node.State == domain.NodeLeased {
+		node.State = domain.NodeReady
+		node.Version++
+		node.UpdatedAt = now
+		state.Nodes[node.ID] = node
+	}
+	return lease
 }
 
 func (s *Service) ExpireDue(ctx context.Context) (int, error) {

@@ -9,13 +9,14 @@ import (
 )
 
 const (
-	MaxZoneRunes       = 253
-	MaxAuthorityRunes  = 253
-	MaxNodeNameRunes   = 180
-	MaxRegionRunes     = 48
-	MinRequestKeyRunes = 8
-	MaxRequestKeyRunes = 64
-	MaxEntries         = 500
+	MaxZoneRunes          = 253
+	MaxAuthorityRunes     = 253
+	MaxNodeNameRunes      = 180
+	MaxRegionRunes        = 48
+	MinRequestKeyRunes    = 8
+	MaxRequestKeyRunes    = 64
+	MaxEntries            = 500
+	MaxReleaseReasonRunes = 200
 )
 
 type PlanCreateInput struct {
@@ -42,6 +43,10 @@ type LeaseInput struct {
 	Region       string `json:"region"`
 	LeaseSeconds int    `json:"lease_seconds"`
 	MaxNodes     int    `json:"max_nodes"`
+}
+
+type LeaseGroupReleaseInput struct {
+	Reason string `json:"reason"`
 }
 
 type ProbeInput struct {
@@ -215,6 +220,20 @@ func ValidateLeaseInput(input LeaseInput) error {
 	}
 	if len(details) > 0 {
 		return Validation("lease input is invalid", details)
+	}
+	return nil
+}
+
+func NormalizeLeaseGroupReleaseInput(input LeaseGroupReleaseInput) LeaseGroupReleaseInput {
+	input.Reason = strings.TrimSpace(input.Reason)
+	return input
+}
+
+func ValidateLeaseGroupReleaseInput(input LeaseGroupReleaseInput) error {
+	if count := utf8.RuneCountInString(input.Reason); count > MaxReleaseReasonRunes {
+		return Validation("lease group release input is invalid", map[string]any{
+			"reason": "must contain at most 200 characters",
+		})
 	}
 	return nil
 }
