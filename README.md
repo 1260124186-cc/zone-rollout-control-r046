@@ -113,6 +113,16 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/leases \
   }'
 ```
 
+按分配组整批释放（事故恢复）：
+
+```bash
+curl -sS -X PATCH http://127.0.0.1:8090/v1/lease-groups/<group_id>/release \
+  -H 'Content-Type: application/json' \
+  -d '{"reason": "incident rollback 2026-09-30"}'
+```
+
+整批释放对组内每个租约返回逐项状态（`released`、`already_released`、`already_expired`、`already_reported`）；坏引用整批失败不留部分落地，重复执行不改变节点或审计。单个释放接口 `PATCH /v1/leases/{id}/release` 行为不变。
+
 提交探针：
 
 ```bash
@@ -174,7 +184,8 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 | `PATCH` | `/v1/plans/{id}/activate` | 激活计划 |
 | `PATCH` | `/v1/plans/{id}/complete` | 完成计划 |
 | `PATCH` | `/v1/plans/{id}/leases` | 给节点分配租约 |
-| `PATCH` | `/v1/leases/{id}/release` | 提前释放租约 |
+| `PATCH` | `/v1/lease-groups/{id}/release` | 按分配组整批释放租约 |
+| `PATCH` | `/v1/leases/{id}/release` | 提前释放单个租约 |
 | `PATCH` | `/v1/leases/{id}/probes` | 登记探针并完成租约 |
 | `PATCH` | `/v1/plans/{id}/assessments` | 创建一致性判定 |
 | `GET` | `/v1/plans/{id}/assessments/latest` | 查询最近判定 |
@@ -214,6 +225,7 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 ```bash
 go run ./cmd/workflowprobe plan-revision-lifecycle
 go run ./cmd/workflowprobe node-lease-allocation
+go run ./cmd/workflowprobe lease-group-release
 go run ./cmd/workflowprobe probe-ingestion
 go run ./cmd/workflowprobe consistency-assessment
 ```

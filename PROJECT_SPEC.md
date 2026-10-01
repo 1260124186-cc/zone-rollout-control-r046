@@ -125,6 +125,14 @@ ready --lease--> leased --report--> ready
 - 同请求键不同载荷返回 `idempotency_conflict`。
 - 探针标识符由服务生成，客户端不能覆盖。
 
+### 分配组整批释放
+
+- 入口为 `PATCH /v1/lease-groups/{id}/release`，请求体必须携带 1 到 256 字符的 `reason`，同一原因应用于组内每个 `claimed` 租约。
+- 所有租约在单个锁内事务中处理：先解析组内全部租约和节点引用，再统一执行 `claimed -> released` 终态规则；任何坏引用都会整批失败，不产生部分落地。
+- 组内逐项返回状态：`released`、`already_released`、`already_expired` 或 `already_reported`。后三种终态按幂等规则说明，不修改租约和节点，也不追加审计。
+- 重复整组释放只返回幂等结果，不改变节点状态或审计；释放审计统一记录同一原因。
+- 原 `PATCH /v1/leases/{id}/release` 单个释放接口保持原有行为不变。
+
 ### 一致性判定
 
 - 至少需要一个探针。
@@ -256,6 +264,7 @@ ready --lease--> leased --report--> ready
 - `PATCH /v1/plans/{id}/activate`
 - `PATCH /v1/plans/{id}/complete`
 - `PATCH /v1/plans/{id}/leases`
+- `PATCH /v1/lease-groups/{id}/release`
 - `PATCH /v1/leases/{id}/release`
 - `PATCH /v1/leases/{id}/probes`
 - `PATCH /v1/plans/{id}/assessments`

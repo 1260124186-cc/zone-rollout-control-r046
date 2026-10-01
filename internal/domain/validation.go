@@ -44,6 +44,15 @@ type LeaseInput struct {
 	MaxNodes     int    `json:"max_nodes"`
 }
 
+type GroupReleaseInput struct {
+	Reason string `json:"reason"`
+}
+
+const (
+	MinReleaseReasonRunes = 1
+	MaxReleaseReasonRunes = 256
+)
+
 type ProbeInput struct {
 	RequestKey     string    `json:"request_key"`
 	Success        bool      `json:"success"`
@@ -215,6 +224,18 @@ func ValidateLeaseInput(input LeaseInput) error {
 	}
 	if len(details) > 0 {
 		return Validation("lease input is invalid", details)
+	}
+	return nil
+}
+
+func ValidateGroupReleaseInput(input GroupReleaseInput) error {
+	input.Reason = strings.TrimSpace(input.Reason)
+	details := make(map[string]any)
+	if count := utf8.RuneCountInString(input.Reason); count < MinReleaseReasonRunes || count > MaxReleaseReasonRunes {
+		details["reason"] = "must contain between 1 and 256 characters"
+	}
+	if len(details) > 0 {
+		return Validation("lease group release input is invalid", details)
 	}
 	return nil
 }

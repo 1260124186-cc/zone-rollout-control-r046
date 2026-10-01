@@ -105,6 +105,33 @@ type LeaseGroup struct {
 	CreatedAt          time.Time `json:"created_at"`
 }
 
+type LeaseReleaseStatus string
+
+const (
+	LeaseReleaseReleased        LeaseReleaseStatus = "released"
+	LeaseReleaseAlreadyReleased LeaseReleaseStatus = "already_released"
+	LeaseReleaseAlreadyExpired  LeaseReleaseStatus = "already_expired"
+	LeaseReleaseAlreadyReported LeaseReleaseStatus = "already_reported"
+)
+
+type LeaseReleaseItem struct {
+	LeaseID string             `json:"lease_id"`
+	NodeID  string             `json:"node_id"`
+	State   LeaseState         `json:"state"`
+	Status  LeaseReleaseStatus `json:"status"`
+	Lease   NodeLease          `json:"lease"`
+}
+
+type GroupReleaseResult struct {
+	GroupID        string             `json:"group_id"`
+	PlanID         string             `json:"plan_id"`
+	Reason         string             `json:"reason"`
+	ReleasedCount  int                `json:"released_count"`
+	UnchangedCount int                `json:"unchanged_count"`
+	ReleasedAt     time.Time          `json:"released_at"`
+	Items          []LeaseReleaseItem `json:"items"`
+}
+
 type Probe struct {
 	ID                 string    `json:"id"`
 	LeaseID            string    `json:"lease_id"`
